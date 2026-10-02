@@ -95,6 +95,7 @@ class Config:
     """应用配置"""
 
     ENV_PUSH_KEY = "PUSHDEER_SENDKEY"
+    ENV_SCKEY = "SCKEY"  # 新增 Server酱 变量
     ENV_COOKIES = "GLADOS_COOKIES"
     ENV_EXCHANGE_PLAN = "GLADOS_EXCHANGE_PLAN"
     ENV_VERBOSE = "GLADOS_VERBOSE"
@@ -117,6 +118,7 @@ class Config:
 
     def __init__(self):
         self.push_key: str = ""
+        self.sckey: str = ""  # 新增
         self.cookies_list: List[str] = []
         self.exchange_plan: str = self.DEFAULT_EXCHANGE_PLAN
         self.verbose: bool = self.DEFAULT_VERBOSE
@@ -125,6 +127,7 @@ class Config:
     def _load_config(self) -> None:
         """加载配置"""
         push_key_env: Optional[str] = os.environ.get(self.ENV_PUSH_KEY)
+        sckey_env: Optional[str] = os.environ.get(self.ENV_SCKEY)  # 新增
         raw_cookies_env: Optional[str] = os.environ.get(self.ENV_COOKIES)
         exchange_plan_env: Optional[str] = os.environ.get(self.ENV_EXCHANGE_PLAN)
         verbose_env: Optional[str] = os.environ.get(self.ENV_VERBOSE)
@@ -134,6 +137,12 @@ class Config:
             self.push_key = ""
         else:
             self.push_key = push_key_env
+
+        if not sckey_env:
+            logger.warning(f"{LogEmoji.WARNING} 环境变量 '{self.ENV_SCKEY}' 未设置。")
+            self.sckey = ""
+        else:
+            self.sckey = sckey_env
 
         if not raw_cookies_env:
             logger.warning(f"{LogEmoji.WARNING} 环境变量 '{self.ENV_COOKIES}' 未设置。")
@@ -156,6 +165,7 @@ class Config:
 
         logger.info(f"{LogEmoji.INFO} 共加载了 {len(self.cookies_list)} 个 Cookie 用于签到。")
         logger.info(f"{LogEmoji.INFO} 当前 {self.ENV_PUSH_KEY} {'已设置' if push_key_env else '未设置'}。")
+        logger.info(f"{LogEmoji.INFO} 当前 {self.ENV_SCKEY} {'已设置' if sckey_env else '未设置'}。")
         logger.info(f"{LogEmoji.INFO} 当前 {self.ENV_EXCHANGE_PLAN}: {self.exchange_plan}。")
 
         if verbose_env is not None:
@@ -398,18 +408,35 @@ class PushService:
 
     def send(self, title: str, content: str) -> bool:
         """发送推送"""
-        if not self.config.push_key:
-            logger.info(f"{LogEmoji.WARNING} 未设置推送密钥，跳过推送通知。")
-            return False
+        success = False
 
-        try:
-            pushdeer = PushDeer(pushkey=self.config.push_key)
-            pushdeer.send_text(title, desp=content)
-            logger.info(f"{LogEmoji.SUCCESS} 推送通知发送成功。")
-            return True
-        except Exception as e:
-            logger.error(f"{LogEmoji.ERROR} 发送推送通知失败: {e}")
-            return False
+        # 1. 尝试 Server酱 推送
+        if self.config.sckey:
+            try:
+                import requests
+                data = {"text": title, "desp": content.replace("\n", "\n\n")}
+                res = requests.post(f"https://sctapi.ftqq.com/{self.config.sckey}.send", data=data).json()
+                if res.get('code') == 0:
+                    logger.info(f"{LogEmoji.SUCCESS} Server酱推送成功！")
+                    success = True
+                else:
+                    logger.error(f"{LogEmoji.ERROR} Server酱推送失败: {res}")
+            except Exception as e:
+                logger.error(f"{LogEmoji.ERROR} Server酱推送异常: {e}")
+
+        # 2. 尝试 PushDeer 推送 (如果配置了的话)
+        if self.config.push_key:
+            try:
+                pushdeer = PushDeer(pushkey=self.config.push_key)
+                pushdeer.send_text(title, desp=content)
+                logger.info(f"{LogEmoji.SUCCESS} PushDeer推送成功。")
+                success = True
+            except Exception as e:
+                logger.error(f"{LogEmoji.ERROR} PushDeer推送失败: {e}")
+
+        if not success:
+            logger.info(f"{LogEmoji.WARNING} 未设置推送密钥，跳过推送通知。")
+        return success
 
 
 class Checker:
